@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Patient Management - MedSmart</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+
+<body>
+    <!-- Sidebar injected by layout.js -->
+
+    <div class="main-content">
+        <!-- Header injected by layout.js -->
+
+        <section class="view-section active" style="display:block;">
+            <div class="view-container">
+                <h1 style="margin-bottom: 24px;">
+                    <i class="ph-fill ph-users"></i> Patient Management
+                </h1>
+
+                <!-- Search Bar -->
+                <div class="panel" style="margin-bottom: 24px;">
+                    <div class="form-group">
+                        <label>Search Patients</label>
+                        <div style="position: relative;">
+                            <input type="text" id="patient-search" placeholder="Search by name, email, or phone..."
+                                style="width: 100%; padding: 12px 12px 12px 45px; border: 1px solid var(--border-color); border-radius: 8px; font-size: 1rem;">
+                            <i class="ph-bold ph-magnifying-glass"
+                                style="position: absolute; left: 15px; top: 50%; transform: translateY(-50%); color: var(--text-muted); font-size: 20px;"></i>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Patient List -->
+                <div class="panel">
+                    <h2
+                        style="margin-bottom: 20px; display: flex; align-items: center; justify-content: space-between;">
+                        <span>All Patients</span>
+                        <span style="font-size: 0.9rem; font-weight: 500; color: var(--text-muted);"
+                            id="patient-count">0 patients</span>
+                    </h2>
+
+                    <div id="patient-list" style="display: grid; gap: 16px;">
+                        <!-- Patients will be loaded here -->
+                    </div>
+
+                    <div id="no-patients" style="display: none; text-align: center; padding: 60px 20px;">
+                        <i class="ph ph-users" style="font-size: 80px; color: var(--text-muted); opacity: 0.3;"></i>
+                        <h3 style="color: var(--text-muted); margin-top: 16px;">No patients found</h3>
+                        <p style="color: var(--text-muted); margin-top: 8px;">Patients will appear here when they
+                            register</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <!-- Patient Detail Modal -->
+    <div class="modal" id="patient-modal">
+        <div class="modal-content" style="max-width: 700px;">
+            <span class="modal-close" onclick="closePatientModal()">&times;</span>
+            <div id="patient-detail"></div>
+        </div>
+    </div>
+
+    <script src="js/session.js"></script>
+    <script src="js/theme.js"></script>
+    <script src="js/layout.js"></script>
+    <script src="js/search.js"></script>
+    <script>
+        let allPatients = [];
+
+        document.addEventListener('DOMContentLoaded', () => {
+            loadPatients();
+
+            // Search functionality
+            document.getElementById('patient-search').addEventListener('input', (e) => {
+                const query = e.target.value.toLowerCase();
+                filterPatients(query);
+            });
+        });
+
+        function loadPatients() {
+            const users = JSON.parse(localStorage.getItem('registeredUsers')) || [];
+            allPatients = users.filter(u => u.role === 'patient');
+
+            displayPatients(allPatients);
+        }
+
+        function displayPatients(patients) {
+            const container = document.getElementById('patient-list');
+            const noPatients = document.getElementById('no-patients');
+            const countEl = document.getElementById('patient-count');
+
+            countEl.textContent = `${patients.length} patient${patients.length !== 1 ? 's' : ''}`;
+
+            if (patients.length === 0) {
+                container.style.display = 'none';
+                noPatients.style.display = 'block';
+                return;
+            }
+
+            container.style.display = 'grid';
+            noPatients.style.display = 'none';
+
+            container.innerHTML = patients.map(patient => `
+                <div class="stat-card" style="cursor: pointer; padding: 20px;" onclick="viewPatient(${patient.id})">
+                    <div style="display: flex; align-items: center; gap: 16px; width: 100%;">
+                        <div style="width: 50px; height: 50px; background: var(--primary-light); color: var(--primary-dark); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 1.25rem; font-weight: 700; flex-shrink: 0;">
+                            ${getInitials(patient.name)}
+                        </div>
+                        <div style="flex: 1;">
+                            <h3 style="font-size: 1.1rem; margin-bottom: 4px;">${patient.name}</h3>
+                            <div style="display: flex; gap: 20px; font-size: 0.9rem; color: var(--text-muted);">
+                                <span><i class="ph ph-envelope"></i> ${patient.email}</span>
+                                ${patient.phone ? `<span><i class="ph ph-phone"></i> ${patient.phone}</span>` : ''}
+                            </div>
+                        </div>
+                        <div style="display: flex; gap: 12px; align-items: center;">
+                            ${patient.age ? `<div style="background: var(--bg-color); padding: 6px 12px; border-radius: 6px; font-size: 0.85rem; font-weight: 600;">${patient.age} yrs</div>` : ''}
+                            ${patient.gender ? `<div style="background: var(--bg-color); padding: 6px 12px; border-radius: 6px; font-size: 0.85rem; text-transform: capitalize;">${patient.gender}</div>` : ''}
+                            <i class="ph ph-caret-right" style="font-size: 20px; color: var(--text-muted);"></i>
+                        </div>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function getInitials(name) {
+            if (!name) return '?';
+            const parts = name.trim().split(' ');
+            if (parts.length === 1) return parts[0].charAt(0).toUpperCase();
+            return (parts[0].charAt(0) + parts[parts.length - 1].charAt(0)).toUpperCase();
+        }
+
+        function filterPatients(query) {
+            if (!query) {
+                displayPatients(allPatients);
+                return;
+            }
+
+            const filtered = allPatients.filter(p =>
+                p.name.toLowerCase().includes(query) ||
+                p.email.toLowerCase().includes(query) ||
+                (p.phone && p.phone.includes(query))
+            );
+
+            displayPatients(filtered);
+        }
+
+        function viewPatient(patientId) {
+            const patient = allPatients.find(p => p.id === patientId);
+            if (!patient) return;
+
+            const modal = document.getElementById('patient-modal');
+            const detailDiv = document.getElementById('patient-detail');
+
+            // Get patient's prescription history
+            const prescriptions = JSON.parse(localStorage.getItem('prescriptions')) || [];
+            const patientRx = prescriptions.filter(rx =>
+                rx.patientDetails && rx.patientDetails.email === patient.email
+            );
+
+            detailDiv.innerHTML = `
+                <div style="text-align: center; margin-bottom: 32px;">
+                    <div style="width: 80px; height: 80px; background: var(--primary-color); color: white; border-radius: 50%; margin: 0 auto 16px; display: flex; align-items: center; justify-content: center; font-size: 2rem; font-weight: 700;">
+                        ${getInitials(patient.name)}
+                    </div>
+                    <h2>${patient.name}</h2>
+                    <p style="color: var(--text-muted);">Patient ID: ${patient.id}</p>
+                </div>
+                
+                <div style="display: grid; gap: 12px; margin-bottom: 24px;">
+                    <div style="padding: 16px; background: var(--bg-color); border-radius: 8px;">
+                        <strong><i class="ph ph-envelope"></i> Email:</strong> ${patient.email}
+                    </div>
+                    ${patient.phone ? `<div style="padding: 16px; background: var(--bg-color); border-radius: 8px;"><strong><i class="ph ph-phone"></i> Phone:</strong> ${patient.phone}</div>` : ''}
+                    ${patient.age ? `<div style="padding: 16px; background: var(--bg-color); border-radius: 8px;"><strong><i class="ph ph-calendar"></i> Age:</strong> ${patient.age} years</div>` : ''}
+                    ${patient.gender ? `<div style="padding: 16px; background: var(--bg-color); border-radius: 8px;"><strong><i class="ph ph-gender-${patient.gender === 'male' ? 'male' : 'female'}"></i> Gender:</strong> ${patient.gender.charAt(0).toUpperCase() + patient.gender.slice(1)}</div>` : ''}
+                    ${patient.emergencyName ? `<div style="padding: 16px; background: var(--bg-color); border-radius: 8px;"><strong><i class="ph ph-phone-plus"></i> Emergency Contact:</strong> ${patient.emergencyName}${patient.emergencyPhone ? ' - ' + patient.emergencyPhone : ''}</div>` : ''}
+                </div>
+                
+                <h3 style="margin-bottom: 12px;"><i class="ph-fill ph-file-text"></i> Prescription History</h3>
+                <div style="background: var(--bg-color); padding: 16px; border-radius: 8px;">
+                    ${patientRx.length > 0 ? `
+                        <p style="font-weight: 600; color: var(--primary-color); margin-bottom: 12px;">${patientRx.length} prescription${patientRx.length !== 1 ? 's' : ''} on record</p>
+                        ${patientRx.slice(0, 3).map(rx => `
+                            <div style="padding: 12px; background: white; border-radius: 6px; margin-bottom: 8px;">
+                                <div style="font-weight: 600;">${rx.doctor}</div>
+                                <div style="font-size: 0.85rem; color: var(--text-muted);">${rx.date} - ${rx.medicines.join(', ')}</div>
+                            </div>
+                        `).join('')}
+                        ${patientRx.length > 3 ? `<p style="text-align: center; color: var(--text-muted); font-size: 0.9rem; margin-top: 8px;">+${patientRx.length - 3} more prescription${patientRx.length - 3 !== 1 ? 's' : ''}</p>` : ''}
+                    ` : '<p style="color: var(--text-muted);">No prescriptions on record</p>'}
+                </div>
+            `;
+
+            modal.classList.add('active');
+        }
+
+        function closePatientModal() {
+            document.getElementById('patient-modal').classList.remove('active');
+        }
+
+        // Close modal on outside click
+        document.addEventListener('click', (e) => {
+            const modal = document.getElementById('patient-modal');
+            if (e.target === modal) {
+                closePatientModal();
+            }
+        });
+    </script>
+</body>
+
+</html>
+

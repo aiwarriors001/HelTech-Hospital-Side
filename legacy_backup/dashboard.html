@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard - MedSmart</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+
+<body>
+    <!-- Sidebar injected by layout.js -->
+
+    <div class="main-content">
+        <!-- Header injected by layout.js -->
+
+        <section class="view-section active" style="display:block;">
+            <div class="view-container">
+                <h1 style="margin-bottom: 8px;">Dashboard</h1>
+                <p style="color: var(--text-muted); margin-bottom: 32px;" id="dashboard-subtitle">Welcome back!</p>
+
+                <!-- Dashboard content will be loaded based on role -->
+                <div id="dashboard-content">
+                    <!-- Content loaded dynamically by role-specific JS -->
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <!-- Core Scripts -->
+    <script src="js/session.js"></script>
+    <script src="js/theme.js"></script>
+    <script src="js/layout.js"></script>
+    <script src="js/search.js"></script>
+
+    <!-- Dashboard Initialization -->
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const userData = getUserData();
+
+            // Load hospital dashboard script
+            const dashboardScript = document.createElement('script');
+            dashboardScript.src = 'js/dashboard.js';
+
+            dashboardScript.onload = () => {
+                // Call hospital dashboard function after script loads
+                loadHospitalDashboard(userData);
+            };
+
+            document.body.appendChild(dashboardScript);
+        });
+    </script>
+</body>
+
+</html>
