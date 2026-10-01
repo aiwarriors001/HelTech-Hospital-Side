@@ -1,82 +1,285 @@
-
 import { createContext, useContext, useState, useEffect } from 'react';
+import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import secureStorage from '../utils/secureStorage';
+import toast from 'react-hot-toast';
 
 const AuthContext = createContext();
 
-export const useAuth = () => useContext(AuthContext);
+export const useAuth = () => {
+    const context = useContext(AuthContext);
+    if (!context) {
+        throw new Error('useAuth must be used within an AuthProvider');
+    }
+    return context;
+};
 
-import secureStorage from '../utils/secureStorage';
+const MOCK_HOSPITAL_USER = {
+    id: 'hospital_001',
+    role: 'hospital',
+    name: 'Dr. Sarah Jenkins',
+    hospitalName: 'City General Hospital',
+    email: 'admin@cityhospital.com',
+    phone: '+1 234 567 8900',
+    address: '123 Medical Center Drive, Suite 400',
+    department: 'Hospital Administration & Emergency Care',
+    profileComplete: true
+};
 
 export const AuthProvider = ({ children }) => {
-  const [user, setUser] = useState(null);
-  const [role, setRole] = useState(secureStorage.getItem('activeRole') || 'hospital');
+    const [user, setUser] = useState(() => secureStorage.getItem('user_session') || null);
+    const [profile, setProfile] = useState(null);
+    const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    // Mock getting user data based on role
-    const fetchUserData = () => {
-      if (role === 'hospital') {
-        const hospitalUser = {
-          id: 'hospital_001',
-          role: 'hospital',
-          name: 'City General Hospital',
-          hospitalName: 'City General Hospital',
-          email: 'admin@cityhospital.com',
-          phone: '+1 234 567 8900',
-          address: '123 Medical Center Drive',
-          profileComplete: true
-        };
-        setUser(hospitalUser);
-        secureStorage.setItem('user_session', hospitalUser); // Encrypt user data
-
-        // Apply theme
+    // Apply Hospital Branding Colors
+    useEffect(() => {
         document.documentElement.style.setProperty('--primary-color', '#2563EB');
         document.documentElement.style.setProperty('--primary-light', '#EFF6FF');
         document.documentElement.style.setProperty('--primary-dark', '#1E40AF');
-      } else {
-        const patientUser = {
-          id: 'patient_001',
-          role: 'patient',
-          name: 'John Doe',
-          email: 'john.doe@example.com',
-          phone: '+1 234 567 8901',
-          dateOfBirth: '1990-01-15',
-          gender: 'male',
-          bloodGroup: 'O+',
-          address: '456 Patient Street',
-          emergencyName: 'Jane Doe',
-          emergencyPhone: '+1 234 567 8902',
-          allergies: 'None',
-          profileComplete: true
-        };
-        setUser(patientUser);
-        secureStorage.setItem('user_session', patientUser); // Encrypt user data
+    }, []);
 
-        // Apply theme
-        document.documentElement.style.setProperty('--primary-color', '#2563EB');
-        document.documentElement.style.setProperty('--primary-light', '#EFF6FF');
-        document.documentElement.style.setProperty('--primary-dark', '#1E40AF');
-      }
+    // Initial session detection via Supabase
+    useEffect(() => {
+        const timeout = setTimeout(() => setLoading(false), 2000);
+
+        supabase.auth.getSession().then(({ data: { session } }) => {
+            clearTimeout(timeout);
+            if (session?.user) {
+                const formattedUser = {
+                    id: session.user.id,
+                    email: session.user.email,
+                    name: session.user.user_metadata?.full_name || session.user.user_metadata?.name || session.user.email.split('@')[0],
+                    hospitalName: session.user.user_metadata?.hospital_name || 'City General Hospital',
+                    role: 'hospital',
+                    phone: session.user.user_metadata?.mobile_number || '+1 234 567 8900'
+                };
+                setUser(formattedUser);
+                secureStorage.setItem('user_session', formattedUser);
+                secureStorage.setItem('activeRole', 'hospital');
+                loadUserProfile(session.user.id);
+            }
+            setLoading(false);
+        }).catch(() => {
+            clearTimeout(timeout);
+            setLoading(false);
+        });
+
+        const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+            if (session?.user) {
+                const formattedUser = {
+                    id: session.user.id,
+                    email: session.user.email,
+                    name: session.user.user_metadata?.full_name || session.user.user_metadata?.name || session.user.email.split('@')[0],
+                    hospitalName: session.user.user_metadata?.hospital_name || 'City General Hospital',
+                    role: 'hospital',
+                    phone: session.user.user_metadata?.mobile_number || '+1 234 567 8900'
+                };
+                setUser(formattedUser);
+                secureStorage.setItem('user_session', formattedUser);
+                secureStorage.setItem('activeRole', 'hospital');
+                loadUserProfile(session.user.id);
+            } else if (!secureStorage.getItem('user_session')) {
+                setUser(null);
+                setProfile(null);
+            }
+        });
+
+        return () => {
+            clearTimeout(timeout);
+            subscription?.unsubscribe();
+        };
+    }, []);
+
+    const loadUserProfile = async (userId) => {
+        try {
+            const { data, error } = await supabase
+                .from('profiles')
+                .select('*')
+                .eq('auth_user_id', userId)
+                .single();
+            if (!error && data) {
+                setProfile(data);
+            }
+        } catch (e) {
+            console.warn('Profile load:', e.message);
+        }
     };
 
-    fetchUserData();
-  }, [role]);
+    const syncProfile = async (authUser) => {
+        try {
+            const { data, error } = await supabase
+                .from('profiles')
+                .upsert({
+                    auth_user_id: authUser.id,
+                    email_id: authUser.email,
+                    full_name: authUser.user_metadata?.full_name || authUser.user_metadata?.name || '',
+                    avatar_url: authUser.user_metadata?.avatar_url || authUser.user_metadata?.picture || '',
+                    auth_provider: authUser.app_metadata?.provider || 'email',
+                }, { onConflict: 'auth_user_id' })
+                .select()
+                .single();
+            if (!error && data) setProfile(data);
+        } catch (e) {
+            console.warn('syncProfile:', e.message);
+        }
+    };
 
-  const switchRole = (newRole) => {
-    setRole(newRole);
-    secureStorage.setItem('activeRole', newRole);
-  };
+    // Hospital Staff Sign In
+    const signIn = async (email, password) => {
+        try {
+            const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+            if (error) throw error;
 
-  const logout = () => {
-    setUser(null);
-    secureStorage.removeItem('activeRole');
-    secureStorage.removeItem('user_session');
-    // Optional: Redirect to login if separate login page exists
-    // window.location.href = '/login'; 
-  };
+            const formattedUser = {
+                id: data.user.id,
+                email: data.user.email,
+                name: data.user.user_metadata?.full_name || data.user.email.split('@')[0],
+                hospitalName: data.user.user_metadata?.hospital_name || 'City General Hospital',
+                role: 'hospital',
+                phone: data.user.user_metadata?.mobile_number || ''
+            };
 
-  return (
-    <AuthContext.Provider value={{ user, role, switchRole, logout }}>
-      {children}
-    </AuthContext.Provider>
-  );
+            setUser(formattedUser);
+            secureStorage.setItem('user_session', formattedUser);
+            secureStorage.setItem('activeRole', 'hospital');
+
+            toast.success(`Welcome back, ${formattedUser.name}!`);
+            return { user: formattedUser, error: null };
+        } catch (error) {
+            const msg =
+                error.message === 'Invalid login credentials' ? 'Incorrect email or password' :
+                error.message === 'Email not confirmed' ? 'Please confirm your email or use Instant Demo Login' :
+                error.message?.includes('rate limit') ? 'Too many attempts — try again later' :
+                error.message || 'Hospital sign in failed';
+            toast.error(msg);
+            return { user: null, error };
+        }
+    };
+
+    // Hospital Staff Registration
+    const signUp = async (email, password, metadata = {}) => {
+        try {
+            const { data, error } = await supabase.auth.signUp({
+                email,
+                password,
+                options: {
+                    data: {
+                        full_name: metadata.full_name,
+                        mobile_number: metadata.mobile_number,
+                        role: 'hospital',
+                        hospital_name: metadata.hospital_name || metadata.full_name,
+                        hospital_location: metadata.hospital_location || ''
+                    }
+                }
+            });
+
+            if (error) throw error;
+
+            // Attempt to insert/upsert into profiles table
+            if (data?.user) {
+                try {
+                    await supabase.from('profiles').upsert([{
+                        auth_user_id: data.user.id,
+                        email_id: email,
+                        full_name: metadata.full_name,
+                        phone_number: metadata.mobile_number,
+                        hospital_name: metadata.hospital_name || metadata.full_name,
+                        hospital_location: metadata.hospital_location || '',
+                        auth_provider: 'email',
+                        role: 'hospital'
+                    }], { onConflict: 'auth_user_id' });
+                } catch (pe) {
+                    console.warn('Profile insert error:', pe.message);
+                }
+
+                const formattedUser = {
+                    id: data.user.id,
+                    email: data.user.email,
+                    name: metadata.full_name || email.split('@')[0],
+                    hospitalName: metadata.hospital_name || metadata.full_name,
+                    role: 'hospital',
+                    phone: metadata.mobile_number || ''
+                };
+
+                if (data.session) {
+                    setUser(formattedUser);
+                    secureStorage.setItem('user_session', formattedUser);
+                    secureStorage.setItem('activeRole', 'hospital');
+                }
+            }
+
+            if (data?.user && !data?.session) {
+                toast.success('Registration successful! Please confirm your email, or disable email confirmation in Supabase to login immediately.');
+                return { user: data.user, error: null };
+            }
+
+            toast.success('Hospital account created successfully!');
+            return { user: data.user, error: null };
+        } catch (error) {
+            const message =
+                error.message === 'User already registered' ? 'Email already registered' :
+                error.message || 'Failed to create hospital account';
+            toast.error(message);
+            return { user: null, error };
+        }
+    };
+
+    // Google OAuth
+    const signInWithOAuth = async (provider = 'google') => {
+        try {
+            const { data, error } = await supabase.auth.signInWithOAuth({
+                provider,
+                options: { redirectTo: `${window.location.origin}/auth/callback` }
+            });
+            if (error) throw error;
+            return { data, error: null };
+        } catch (error) {
+            toast.error(`Failed to sign in with ${provider}`);
+            return { data: null, error };
+        }
+    };
+
+    // Instant Demo Hospital Login
+    const demoLogin = () => {
+        setUser(MOCK_HOSPITAL_USER);
+        secureStorage.setItem('user_session', MOCK_HOSPITAL_USER);
+        secureStorage.setItem('activeRole', 'hospital');
+        toast.success('Logged in as Hospital Administrator & Doctor!');
+        return MOCK_HOSPITAL_USER;
+    };
+
+    // Sign out & clear session
+    const logout = async () => {
+        try {
+            await supabase.auth.signOut();
+        } catch (e) {
+            console.warn('Sign out:', e.message);
+        }
+        setUser(null);
+        setProfile(null);
+        secureStorage.removeItem('activeRole');
+        secureStorage.removeItem('user_session');
+        toast.success('Signed out of hospital portal');
+    };
+
+    return (
+        <AuthContext.Provider value={{
+            user,
+            role: 'hospital',
+            profile,
+            loading,
+            isConfigured: isSupabaseConfigured,
+            signIn,
+            signUp,
+            signInWithOAuth,
+            signOut: logout,
+            logout,
+            demoLogin,
+            syncProfile,
+            loadUserProfile
+        }}>
+            {children}
+        </AuthContext.Provider>
+    );
 };
+
+export default AuthContext;

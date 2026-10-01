@@ -7,6 +7,7 @@ import ErrorBoundary from './components/ErrorBoundary';
 import './assets/css/style.css';
 import './assets/css/animations.css';
 import './assets/css/ui-enhancements.css';
+import './assets/css/auth.css';
 
 ReactDOM.createRoot(document.getElementById('root')).render(
     <React.StrictMode>

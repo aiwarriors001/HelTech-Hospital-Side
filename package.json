@@ -12,11 +12,16 @@
   "dependencies": {
     "@phosphor-icons/react": "^2.1.10",
     "@supabase/supabase-js": "^2.90.1",
+    "agora-rtc-sdk-ng": "^4.24.8",
     "crypto-js": "^4.2.0",
     "date-fns": "^4.1.0",
     "framer-motion": "^12.26.2",
+    "html2canvas": "^1.4.1",
+    "jspdf": "^4.2.1",
+    "lucide-react": "^1.48.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
+    "react-hot-toast": "^2.6.1",
     "react-router-dom": "^7.1.0",
     "recharts": "^3.6.0",
     "vite-plugin-pwa": "^1.2.0"

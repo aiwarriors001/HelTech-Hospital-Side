@@ -1,23 +1,19 @@
-
 import React from 'react';
 import { NavLink } from 'react-router-dom';
-import { useAuth } from '../context/AuthContext';
+import { useData } from '../context/DataContext';
 import {
     House,
     SquaresFour,
-    FileText,
-    FolderOpen,
-    ChatCircleDots,
-    CalendarCheck,
-    User,
     Users,
-    PlusCircle,
+    Pill,
     Hospital,
-    UserCircle
+    CalendarCheck,
+    VideoCamera
 } from '@phosphor-icons/react';
 
 const Sidebar = ({ isOpen, toggleSidebar }) => {
-    const { role } = useAuth();
+    const { callDetails } = useData();
+    const pendingCallsCount = (callDetails || []).filter(c => c && c.status === 'pending').length;
 
     return (
         <>
@@ -27,16 +23,12 @@ const Sidebar = ({ isOpen, toggleSidebar }) => {
             ></div>
             <nav className={`sidebar ${isOpen ? 'open' : ''}`}>
                 <div className="brand">
-                    {role === 'patient' ? (
-                        <PlusCircle weight="fill" size={32} />
-                    ) : (
-                        <Hospital weight="fill" size={32} />
-                    )}
+                    <Hospital weight="fill" size={32} color="#2563EB" />
                     <h1>HelTech</h1>
                 </div>
 
                 <ul className="nav-menu">
-                    <NavLink to="/" onClick={() => toggleSidebar(false)} className={({ isActive }) => `nav-item hover-bounce-icon ${isActive ? 'active' : ''}`}>
+                    <NavLink to="/" end onClick={() => toggleSidebar(false)} className={({ isActive }) => `nav-item hover-bounce-icon ${isActive ? 'active' : ''}`}>
                         <House size={20} /> <span>Home</span>
                     </NavLink>
 
@@ -44,37 +36,42 @@ const Sidebar = ({ isOpen, toggleSidebar }) => {
                         <SquaresFour size={20} /> <span>Dashboard</span>
                     </NavLink>
 
-                    {role === 'patient' ? (
-                        <>
-                            <NavLink to="/prescription" onClick={() => toggleSidebar(false)} className={({ isActive }) => `nav-item hover-bounce-icon ${isActive ? 'active' : ''}`}>
-                                <FileText size={20} /> <span>Upload Prescription</span>
-                            </NavLink>
-                            <NavLink to="/history" onClick={() => toggleSidebar(false)} className={({ isActive }) => `nav-item hover-bounce-icon ${isActive ? 'active' : ''}`}>
-                                <FolderOpen size={20} /> <span>My History</span>
-                            </NavLink>
+                    <NavLink to="/appointment" onClick={() => toggleSidebar(false)} className={({ isActive }) => `nav-item hover-bounce-icon ${isActive ? 'active' : ''}`}>
+                        <CalendarCheck size={20} /> <span>Appointment</span>
+                    </NavLink>
 
-                            <NavLink to="/appointments" onClick={() => toggleSidebar(false)} className={({ isActive }) => `nav-item hover-bounce-icon ${isActive ? 'active' : ''}`}>
-                                <CalendarCheck size={20} /> <span>My Appointments</span>
-                            </NavLink>
-                            <NavLink to="/profile" onClick={() => toggleSidebar(false)} className={({ isActive }) => `nav-item hover-bounce-icon ${isActive ? 'active' : ''}`}>
-                                <User size={20} /> <span>Profile</span>
-                            </NavLink>
-                        </>
-                    ) : (
-                        <>
-                            <NavLink to="/patients" onClick={() => toggleSidebar(false)} className={({ isActive }) => `nav-item hover-bounce-icon ${isActive ? 'active' : ''}`}>
-                                <Users size={20} /> <span>Patient Management</span>
-                            </NavLink>
+                    <NavLink to="/consultancy" onClick={() => toggleSidebar(false)} className={({ isActive }) => `nav-item hover-bounce-icon ${isActive ? 'active' : ''}`}>
+                        <div style={{ display: 'flex', alignItems: 'center', width: '100%', justifyContent: 'space-between' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                <VideoCamera size={20} /> <span>CareConnect</span>
+                            </div>
+                            {pendingCallsCount > 0 && (
+                                <span style={{
+                                    background: '#EF4444',
+                                    color: 'white',
+                                    fontSize: '0.72rem',
+                                    fontWeight: 800,
+                                    padding: '2px 7px',
+                                    borderRadius: '999px',
+                                    lineHeight: 1.2
+                                }}>
+                                    {pendingCallsCount}
+                                </span>
+                            )}
+                        </div>
+                    </NavLink>
 
-                            <NavLink to="/add-prescription" onClick={() => toggleSidebar(false)} className={({ isActive }) => `nav-item hover-bounce-icon ${isActive ? 'active' : ''}`}>
-                                <PlusCircle size={20} /> <span>Add Prescription</span>
-                            </NavLink>
+                    <NavLink to="/patients" onClick={() => toggleSidebar(false)} className={({ isActive }) => `nav-item hover-bounce-icon ${isActive ? 'active' : ''}`}>
+                        <Users size={20} /> <span>Patient Management</span>
+                    </NavLink>
 
-                            <NavLink to="/profile" onClick={() => toggleSidebar(false)} className={({ isActive }) => `nav-item hover-bounce-icon ${isActive ? 'active' : ''}`}>
-                                <Hospital size={20} /> <span>Hospital Profile</span>
-                            </NavLink>
-                        </>
-                    )}
+                    <NavLink to="/prescription" onClick={() => toggleSidebar(false)} className={({ isActive }) => `nav-item hover-bounce-icon ${isActive ? 'active' : ''}`}>
+                        <Pill size={20} /> <span>Prescriptions & Registry</span>
+                    </NavLink>
+
+                    <NavLink to="/profile" onClick={() => toggleSidebar(false)} className={({ isActive }) => `nav-item hover-bounce-icon ${isActive ? 'active' : ''}`}>
+                        <Hospital size={20} /> <span>Hospital Profile</span>
+                    </NavLink>
                 </ul>
             </nav>
         </>
