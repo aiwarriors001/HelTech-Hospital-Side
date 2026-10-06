@@ -11,7 +11,7 @@ export default defineConfig({
       workbox: {
         maximumFileSizeToCacheInBytes: 6 * 1024 * 1024
       },
-      includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'masked-icon.svg'],
+      includeAssets: ['vite.svg'],
       manifest: {
         name: 'HelTech Hospital Manager',
         short_name: 'HelTech',
@@ -19,14 +19,9 @@ export default defineConfig({
         theme_color: '#2563EB',
         icons: [
           {
-            src: 'pwa-192x192.png',
-            sizes: '192x192',
-            type: 'image/png'
-          },
-          {
-            src: 'pwa-512x512.png',
-            sizes: '512x512',
-            type: 'image/png'
+            src: 'vite.svg',
+            sizes: '192x192 512x512',
+            type: 'image/svg+xml'
           }
         ]
       }
