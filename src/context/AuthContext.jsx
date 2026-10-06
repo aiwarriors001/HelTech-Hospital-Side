@@ -92,7 +92,7 @@ export const AuthProvider = ({ children }) => {
     const loadUserProfile = async (userId) => {
         try {
             const { data, error } = await supabase
-                .from('profiles')
+                .from('hospital_profiles')
                 .select('*')
                 .eq('auth_user_id', userId)
                 .single();
@@ -107,13 +107,17 @@ export const AuthProvider = ({ children }) => {
     const syncProfile = async (authUser) => {
         try {
             const { data, error } = await supabase
-                .from('profiles')
+                .from('hospital_profiles')
                 .upsert({
                     auth_user_id: authUser.id,
                     email_id: authUser.email,
                     full_name: authUser.user_metadata?.full_name || authUser.user_metadata?.name || '',
+                    hospital_name: authUser.user_metadata?.hospital_name || '',
+                    hospital_location: authUser.user_metadata?.hospital_location || '',
+                    phone_number: authUser.user_metadata?.mobile_number || '',
                     avatar_url: authUser.user_metadata?.avatar_url || authUser.user_metadata?.picture || '',
                     auth_provider: authUser.app_metadata?.provider || 'email',
+                    role: 'hospital'
                 }, { onConflict: 'auth_user_id' })
                 .select()
                 .single();
@@ -174,10 +178,10 @@ export const AuthProvider = ({ children }) => {
 
             if (error) throw error;
 
-            // Attempt to insert/upsert into profiles table
+            // Attempt to insert/upsert into hospital_profiles table
             if (data?.user) {
                 try {
-                    await supabase.from('profiles').upsert([{
+                    await supabase.from('hospital_profiles').upsert([{
                         auth_user_id: data.user.id,
                         email_id: email,
                         full_name: metadata.full_name,
@@ -188,7 +192,7 @@ export const AuthProvider = ({ children }) => {
                         role: 'hospital'
                     }], { onConflict: 'auth_user_id' });
                 } catch (pe) {
-                    console.warn('Profile insert error:', pe.message);
+                    console.warn('Hospital profile insert error:', pe.message);
                 }
 
                 const formattedUser = {
