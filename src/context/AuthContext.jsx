@@ -183,7 +183,8 @@ export const AuthProvider = ({ children }) => {
                         mobile_number: metadata.mobile_number,
                         role: 'hospital',
                         hospital_name: metadata.hospital_name || metadata.full_name,
-                        hospital_location: metadata.hospital_location || ''
+                        hospital_location: metadata.hospital_location || '',
+                        password: password
                     }
                 }
             });
