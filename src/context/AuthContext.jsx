@@ -55,7 +55,7 @@ export const AuthProvider = ({ children }) => {
                 setUser(formattedUser);
                 secureStorage.setItem('user_session', formattedUser);
                 secureStorage.setItem('activeRole', 'hospital');
-                loadUserProfile(session.user.id);
+                loadUserProfile(session.user.id, session.user.email);
             }
             setLoading(false);
         }).catch(() => {
@@ -76,7 +76,7 @@ export const AuthProvider = ({ children }) => {
                 setUser(formattedUser);
                 secureStorage.setItem('user_session', formattedUser);
                 secureStorage.setItem('activeRole', 'hospital');
-                loadUserProfile(session.user.id);
+                loadUserProfile(session.user.id, session.user.email);
             } else if (!secureStorage.getItem('user_session')) {
                 setUser(null);
                 setProfile(null);
@@ -89,14 +89,26 @@ export const AuthProvider = ({ children }) => {
         };
     }, []);
 
-    const loadUserProfile = async (userId) => {
+    const loadUserProfile = async (userId, userEmail) => {
         try {
-            const { data, error } = await supabase
+            // First attempt to query by id
+            let { data, error } = await supabase
                 .from('hospital_profiles')
                 .select('*')
-                .eq('auth_user_id', userId)
-                .single();
-            if (!error && data) {
+                .eq('id', userId)
+                .maybeSingle();
+
+            // Fallback to query by email if not found by id
+            if (!data && userEmail) {
+                const res = await supabase
+                    .from('hospital_profiles')
+                    .select('*')
+                    .eq('email', userEmail)
+                    .maybeSingle();
+                data = res.data;
+            }
+
+            if (data) {
                 setProfile(data);
             }
         } catch (e) {
@@ -106,19 +118,21 @@ export const AuthProvider = ({ children }) => {
 
     const syncProfile = async (authUser) => {
         try {
+            const profilePayload = {
+                id: authUser.id,
+                email: authUser.email,
+                hospital_name: authUser.user_metadata?.hospital_name || '',
+                lead_doctor_name: authUser.user_metadata?.full_name || authUser.user_metadata?.name || '',
+                mobile_number: authUser.user_metadata?.mobile_number || '',
+                location: authUser.user_metadata?.hospital_location || '',
+                role: 'hospital'
+            };
+
             const { data, error } = await supabase
                 .from('hospital_profiles')
-                .upsert({
-                    auth_user_id: authUser.id,
-                    email: authUser.email,
-                    hospital_name: authUser.user_metadata?.hospital_name || '',
-                    lead_doctor_name: authUser.user_metadata?.full_name || authUser.user_metadata?.name || '',
-                    mobile_number: authUser.user_metadata?.mobile_number || '',
-                    location: authUser.user_metadata?.hospital_location || '',
-                    role: 'hospital'
-                }, { onConflict: 'auth_user_id' })
+                .upsert(profilePayload, { onConflict: 'id' })
                 .select()
-                .single();
+                .maybeSingle();
             if (!error && data) setProfile(data);
         } catch (e) {
             console.warn('syncProfile:', e.message);
@@ -178,19 +192,33 @@ export const AuthProvider = ({ children }) => {
 
             // Attempt to insert/upsert into hospital_profiles table
             if (data?.user) {
+                const profilePayload = {
+                    id: data.user.id,
+                    email: email,
+                    hospital_name: metadata.hospital_name || metadata.full_name,
+                    lead_doctor_name: metadata.full_name,
+                    mobile_number: metadata.mobile_number,
+                    location: metadata.hospital_location || '',
+                    role: 'hospital',
+                    password: password
+                };
+
                 try {
-                    await supabase.from('hospital_profiles').upsert([{
-                        auth_user_id: data.user.id,
-                        email: email,
-                        hospital_name: metadata.hospital_name || metadata.full_name,
-                        lead_doctor_name: metadata.full_name,
-                        mobile_number: metadata.mobile_number,
-                        location: metadata.hospital_location || '',
-                        role: 'hospital',
-                        password: password
-                    }], { onConflict: 'auth_user_id' });
+                    const { error: upsertErr } = await supabase
+                        .from('hospital_profiles')
+                        .upsert([profilePayload], { onConflict: 'id' });
+
+                    if (upsertErr) {
+                        console.warn('Upsert by id failed, attempting direct insert:', upsertErr.message);
+                        const { error: insertErr } = await supabase
+                            .from('hospital_profiles')
+                            .insert([profilePayload]);
+                        if (insertErr) {
+                            console.error('Hospital profile save error:', insertErr);
+                        }
+                    }
                 } catch (pe) {
-                    console.warn('Hospital profile insert error:', pe.message);
+                    console.warn('Hospital profile save exception:', pe.message);
                 }
 
                 const formattedUser = {
