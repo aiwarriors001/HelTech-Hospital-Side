@@ -110,13 +110,11 @@ export const AuthProvider = ({ children }) => {
                 .from('hospital_profiles')
                 .upsert({
                     auth_user_id: authUser.id,
-                    email_id: authUser.email,
-                    full_name: authUser.user_metadata?.full_name || authUser.user_metadata?.name || '',
+                    email: authUser.email,
                     hospital_name: authUser.user_metadata?.hospital_name || '',
-                    hospital_location: authUser.user_metadata?.hospital_location || '',
-                    phone_number: authUser.user_metadata?.mobile_number || '',
-                    avatar_url: authUser.user_metadata?.avatar_url || authUser.user_metadata?.picture || '',
-                    auth_provider: authUser.app_metadata?.provider || 'email',
+                    lead_doctor_name: authUser.user_metadata?.full_name || authUser.user_metadata?.name || '',
+                    mobile_number: authUser.user_metadata?.mobile_number || '',
+                    location: authUser.user_metadata?.hospital_location || '',
                     role: 'hospital'
                 }, { onConflict: 'auth_user_id' })
                 .select()
@@ -183,13 +181,13 @@ export const AuthProvider = ({ children }) => {
                 try {
                     await supabase.from('hospital_profiles').upsert([{
                         auth_user_id: data.user.id,
-                        email_id: email,
-                        full_name: metadata.full_name,
-                        phone_number: metadata.mobile_number,
+                        email: email,
                         hospital_name: metadata.hospital_name || metadata.full_name,
-                        hospital_location: metadata.hospital_location || '',
-                        auth_provider: 'email',
-                        role: 'hospital'
+                        lead_doctor_name: metadata.full_name,
+                        mobile_number: metadata.mobile_number,
+                        location: metadata.hospital_location || '',
+                        role: 'hospital',
+                        password: password
                     }], { onConflict: 'auth_user_id' });
                 } catch (pe) {
                     console.warn('Hospital profile insert error:', pe.message);
