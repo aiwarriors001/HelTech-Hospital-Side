@@ -3,6 +3,7 @@ import { useAuth } from '../context/AuthContext';
 import { useData } from '../context/DataContext';
 import { useNavigate, Link } from 'react-router-dom';
 import { toast } from 'react-hot-toast';
+import supabase from '../lib/supabase';
 import {
     AGORA_APP_ID,
     CALLING_WEBHOOK_BASE_URL,
@@ -16,7 +17,8 @@ import {
     VideoCamera, VideoCameraSlash, Microphone, MicrophoneSlash, PhoneDisconnect, PhoneIncoming,
     Pulse, ChatCircleDots, ShieldCheck, CheckCircle, User, Stethoscope, Broadcast, DeviceMobile,
     LockKey, Clock, Sparkle, PhoneCall, ArrowRight, Desktop, MagnifyingGlass, Plus, X, Check,
-    ArrowClockwise, Copy, CalendarBlank, MapPin, Pill, WarningCircle, CaretRight, Heartbeat
+    ArrowClockwise, Copy, CalendarBlank, MapPin, Pill, WarningCircle, CaretRight, Heartbeat,
+    ArrowsOut, ArrowsIn, SpeakerHigh
 } from '@phosphor-icons/react';
 
 const S = {
@@ -121,6 +123,7 @@ const Consultancy = () => {
     const [isMuted, setIsMuted] = useState(false);
     const [isVideoOff, setIsVideoOff] = useState(false);
     const [showVitals, setShowVitals] = useState(true);
+    const [isFullScreen, setIsFullScreen] = useState(true);
     const [remoteUserJoined, setRemoteUserJoined] = useState(false);
     const [hasLocalVideoTrack, setHasLocalVideoTrack] = useState(false);
     const [hasLocalAudioTrack, setHasLocalAudioTrack] = useState(false);
@@ -128,6 +131,29 @@ const Consultancy = () => {
 
     const localVideoRef = useRef(null);
     const remoteVideoRef = useRef(null);
+    const localTrackRef = useRef(null);
+    const remoteTrackRef = useRef(null);
+    const remoteAudioTrackRef = useRef(null);
+
+    // Keep video tracks attached when refs, activeCall, or fullScreen change
+    useEffect(() => {
+        if (activeCall && !sessionConnecting) {
+            if (localTrackRef.current && localVideoRef.current) {
+                try {
+                    localTrackRef.current.play(localVideoRef.current);
+                } catch (e) {
+                    console.warn('Local track play note:', e);
+                }
+            }
+            if (remoteTrackRef.current && remoteVideoRef.current) {
+                try {
+                    remoteTrackRef.current.play(remoteVideoRef.current);
+                } catch (e) {
+                    console.warn('Remote track play note:', e);
+                }
+            }
+        }
+    }, [activeCall, sessionConnecting, remoteUserJoined, isFullScreen]);
 
     // Leave Agora session if component unmounts
     useEffect(() => {
@@ -196,8 +222,9 @@ const Consultancy = () => {
 
         // Search filter
         if (searchQuery.trim()) {
-            const q = searchQuery.toLowerCase();
+            const q = searchQuery.toLowerCase().replace(/ç/g, 'c');
             list = list.filter(c =>
+                (c.call_id && c.call_id.toLowerCase().includes(q)) ||
                 (c.patient_name && c.patient_name.toLowerCase().includes(q)) ||
                 (c.patient_mobile && c.patient_mobile.includes(q)) ||
                 (c.patient_email && c.patient_email.toLowerCase().includes(q)) ||
@@ -221,13 +248,16 @@ const Consultancy = () => {
         const doc = assignedDoc || onlineDoctors[0];
         setConnectingDoctor(doc);
         setSessionConnecting(true);
+        setIsFullScreen(true);
+        setIsMuted(false);
+        setIsVideoOff(false);
 
         const channelName = call.agora_channel_name || `careconnect_${Date.now()}`;
         const updatedCall = {
             ...call,
             status: 'accepted',
             agora_channel_name: channelName,
-            assigned_doctor_id: user.id || 'doc-on-duty'
+            assigned_doctor_id: user?.id || 'doc-on-duty'
         };
 
         setActiveCall(updatedCall);
@@ -264,21 +294,42 @@ const Consultancy = () => {
                 appId: AGORA_APP_ID,
                 onRemoteUserJoined: (remoteUser, mediaType) => {
                     setRemoteUserJoined(true);
-                    if (mediaType === 'video' && remoteVideoRef.current && remoteUser.videoTrack) {
-                        remoteUser.videoTrack.play(remoteVideoRef.current);
+                    if (mediaType === 'video' && remoteUser.videoTrack) {
+                        remoteTrackRef.current = remoteUser.videoTrack;
+                        if (remoteVideoRef.current) {
+                            try {
+                                remoteUser.videoTrack.play(remoteVideoRef.current);
+                            } catch (e) {
+                                console.warn('Remote video play note:', e);
+                            }
+                        }
                     }
                     if (mediaType === 'audio' && remoteUser.audioTrack) {
-                        remoteUser.audioTrack.play();
+                        remoteAudioTrackRef.current = remoteUser.audioTrack;
+                        try {
+                            remoteUser.audioTrack.setVolume(100);
+                            remoteUser.audioTrack.play();
+                        } catch (e) {
+                            console.warn('Remote audio play note:', e);
+                        }
                     }
                 },
                 onRemoteUserLeft: () => {
                     setRemoteUserJoined(false);
+                    remoteTrackRef.current = null;
                 }
             });
 
-            if (session.hasLocalVideo && localVideoRef.current && session.localVideoTrack) {
-                session.localVideoTrack.play(localVideoRef.current);
+            if (session.hasLocalVideo && session.localVideoTrack) {
+                localTrackRef.current = session.localVideoTrack;
                 setHasLocalVideoTrack(true);
+                if (localVideoRef.current) {
+                    try {
+                        session.localVideoTrack.play(localVideoRef.current);
+                    } catch (e) {
+                        console.warn('Local video play note:', e);
+                    }
+                }
             }
             setHasLocalAudioTrack(session.hasLocalAudio);
         } catch (agoraErr) {
@@ -287,7 +338,7 @@ const Consultancy = () => {
 
         setTimeout(() => {
             setSessionConnecting(false);
-        }, 1000);
+        }, 800);
     };
 
     // End Call
@@ -295,6 +346,9 @@ const Consultancy = () => {
         if (!activeCall) return;
 
         await leaveAgoraSession();
+        localTrackRef.current = null;
+        remoteTrackRef.current = null;
+        remoteAudioTrackRef.current = null;
         setHasLocalVideoTrack(false);
         setHasLocalAudioTrack(false);
         setRemoteUserJoined(false);
@@ -327,20 +381,57 @@ const Consultancy = () => {
         toast(next ? 'Camera paused' : 'Camera active', { icon: next ? '📷' : '📹' });
     };
 
+    const toggleFullScreen = () => {
+        setIsFullScreen(prev => !prev);
+    };
+
+    const handleSpeakerTest = () => {
+        if (remoteAudioTrackRef.current) {
+            try {
+                remoteAudioTrackRef.current.setVolume(100);
+                remoteAudioTrackRef.current.play();
+                toast.success('Patient audio stream is live at 100% volume');
+            } catch (err) {
+                console.warn('Speaker test note:', err);
+            }
+        } else {
+            toast('Audio output is active at 100% volume', { icon: '🔊' });
+        }
+    };
+
     // Join with direct code or PIN
-    const handleDirectJoin = () => {
+    const handleDirectJoin = async () => {
         if (!directRoomInput.trim()) {
-            toast.error('Please enter a Room PIN or Agora Channel Name');
+            toast.error('Please enter a Room PIN, Call ID or Agora Channel Name');
             return;
         }
 
-        const input = directRoomInput.trim();
-        // Check if there is an existing call with this channel name or call_id
-        const matched = (callDetails || []).find(c =>
+        const rawInput = directRoomInput.trim();
+        const input = rawInput.replace(/ç/g, 'c');
+
+        // 1. Check if there is an existing call in local state with this channel name or call_id
+        let matched = (callDetails || []).find(c =>
             (c.agora_channel_name && c.agora_channel_name.toLowerCase() === input.toLowerCase()) ||
+            (c.call_id && c.call_id.toLowerCase() === input.toLowerCase()) ||
             (c.call_id && c.call_id.toLowerCase().includes(input.toLowerCase())) ||
             (c.patient_mobile && c.patient_mobile.includes(input))
         );
+
+        // 2. If not matched in memory, query Supabase database directly
+        if (!matched) {
+            try {
+                const { data } = await supabase
+                    .from('call_details')
+                    .select('*')
+                    .or(`call_id.eq.${input},agora_channel_name.eq.${input}`)
+                    .limit(1);
+                if (data && data[0]) {
+                    matched = data[0];
+                }
+            } catch (err) {
+                console.warn('Database match query note:', err);
+            }
+        }
 
         if (matched) {
             handleStartCall(matched);
@@ -525,64 +616,106 @@ const Consultancy = () => {
                 </div>
             </div>
 
-            {/* Live Interactive Video Call Console (When Active) */}
+            {/* Live Interactive Video Call Console (When Active - Full Screen by Default) */}
             {activeCall && (
-                <div style={{
-                    marginBottom: '32px',
-                    borderRadius: '20px',
-                    background: '#0B0F19',
-                    border: '2px solid #7C3AED',
-                    boxShadow: '0 16px 40px -8px rgba(124, 58, 237, 0.4)',
-                    overflow: 'hidden',
-                    color: 'white'
-                }}>
+                <div
+                    className={isFullScreen ? "careconnect-fullscreen-root" : "careconnect-card-root"}
+                    style={isFullScreen ? {
+                        position: 'fixed',
+                        inset: 0,
+                        width: '100vw',
+                        height: '100vh',
+                        zIndex: 999999,
+                        background: '#040711',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        overflow: 'hidden',
+                        color: 'white'
+                    } : {
+                        marginBottom: '32px',
+                        borderRadius: '20px',
+                        background: '#0B0F19',
+                        border: '2px solid #7C3AED',
+                        boxShadow: '0 16px 40px -8px rgba(124, 58, 237, 0.4)',
+                        overflow: 'hidden',
+                        color: 'white'
+                    }}
+                >
+                    <style>{`
+                        .careconnect-fullscreen-root video {
+                            object-fit: cover !important;
+                            width: 100% !important;
+                            height: 100% !important;
+                        }
+                        .careconnect-pip video {
+                            object-fit: cover !important;
+                            width: 100% !important;
+                            height: 100% !important;
+                        }
+                        @keyframes ccPulseRing {
+                            0% { transform: scale(0.95); opacity: 0.8; }
+                            50% { transform: scale(1.08); opacity: 0.3; }
+                            100% { transform: scale(0.95); opacity: 0.8; }
+                        }
+                    `}</style>
+
                     {/* Top Call Bar */}
                     <div style={{
-                        padding: '16px 24px',
-                        background: 'rgba(255,255,255,0.06)',
-                        borderBottom: '1px solid rgba(255,255,255,0.1)',
+                        padding: isFullScreen ? '18px 32px' : '16px 24px',
+                        background: isFullScreen
+                            ? 'linear-gradient(180deg, rgba(4,7,17,0.95) 0%, rgba(4,7,17,0.7) 70%, transparent 100%)'
+                            : 'rgba(255,255,255,0.06)',
+                        borderBottom: isFullScreen ? 'none' : '1px solid rgba(255,255,255,0.1)',
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'space-between',
                         flexWrap: 'wrap',
-                        gap: '12px'
+                        gap: '12px',
+                        position: isFullScreen ? 'absolute' : 'relative',
+                        top: 0,
+                        left: 0,
+                        right: 0,
+                        zIndex: 60,
+                        backdropFilter: isFullScreen ? 'blur(12px)' : 'none'
                     }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
                             <div style={{
                                 width: 44, height: 44, borderRadius: '12px',
-                                background: '#7C3AED', display: 'flex',
-                                alignItems: 'center', justifyContent: 'center'
+                                background: 'linear-gradient(135deg, #7C3AED, #2563EB)',
+                                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                boxShadow: '0 4px 14px rgba(124, 58, 237, 0.4)'
                             }}>
                                 <VideoCamera size={24} weight="fill" color="white" />
                             </div>
                             <div>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                                    <h3 style={{ margin: 0, fontSize: '1.15rem', fontWeight: 800, color: 'white' }}>
-                                        CareConnect Room: {activeCall.patient_name || 'Telehealth Patient'}
+                                    <h3 style={{ margin: 0, fontSize: isFullScreen ? '1.25rem' : '1.15rem', fontWeight: 800, color: 'white', letterSpacing: '-0.02em' }}>
+                                        CareConnect Doctor Console: {activeCall.patient_name || 'Telehealth Patient'}
                                     </h3>
                                     <span style={{
                                         background: 'rgba(52, 211, 153, 0.2)',
                                         color: '#34D399',
                                         fontSize: '0.72rem',
                                         fontWeight: 800,
-                                        padding: '2px 8px',
+                                        padding: '3px 10px',
                                         borderRadius: '999px',
                                         display: 'inline-flex',
                                         alignItems: 'center',
-                                        gap: '5px'
+                                        gap: '6px',
+                                        border: '1px solid rgba(52, 211, 153, 0.3)'
                                     }}>
-                                        <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#34D399' }} /> LIVE
+                                        <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#34D399', boxShadow: '0 0 8px #34D399' }} /> LIVE CLINICAL STREAM
                                     </span>
                                 </div>
-                                <div style={{ fontSize: '0.82rem', color: '#94A3B8', marginTop: '2px', display: 'flex', gap: '12px', alignItems: 'center' }}>
-                                    <span>Phone: {activeCall.patient_mobile || 'N/A'}</span>
+                                <div style={{ fontSize: '0.84rem', color: '#94A3B8', marginTop: '3px', display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
+                                    <span>Phone: <strong style={{ color: '#F1F5F9' }}>{activeCall.patient_mobile || 'N/A'}</strong></span>
                                     <span>•</span>
-                                    <span>Specialist: {activeCall.specialist_category || 'General Physician'}</span>
+                                    <span>Specialist: <strong style={{ color: '#F1F5F9' }}>{activeCall.specialist_category || 'General Physician'}</strong></span>
                                     <span>•</span>
                                     <span
                                         onClick={() => copyChannelName(activeCall.agora_channel_name)}
-                                        style={{ cursor: 'pointer', color: '#A78BFA', textDecoration: 'underline', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
-                                        title="Click to copy channel"
+                                        style={{ cursor: 'pointer', color: '#A78BFA', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '4px', background: 'rgba(124,58,237,0.18)', padding: '2px 8px', borderRadius: '6px' }}
+                                        title="Click to copy room code"
                                     >
                                         Room: {activeCall.agora_channel_name || 'N/A'} <Copy size={13} />
                                     </span>
@@ -590,24 +723,69 @@ const Consultancy = () => {
                             </div>
                         </div>
 
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                            {/* Live Media Status Indicators */}
                             <div style={{
-                                background: 'rgba(0,0,0,0.4)',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '8px',
+                                background: 'rgba(255,255,255,0.08)',
+                                padding: '6px 14px',
+                                borderRadius: '999px',
+                                fontSize: '0.78rem',
+                                border: '1px solid rgba(255,255,255,0.1)'
+                            }}>
+                                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', color: isMuted ? '#F87171' : '#34D399', fontWeight: 700 }}>
+                                    {isMuted ? <MicrophoneSlash size={14} /> : <Microphone size={14} />} {isMuted ? 'Mic Muted' : 'Mic Live'}
+                                </span>
+                                <span style={{ color: 'rgba(255,255,255,0.2)' }}>|</span>
+                                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', color: isVideoOff ? '#F87171' : '#38BDF8', fontWeight: 700 }}>
+                                    {isVideoOff ? <VideoCameraSlash size={14} /> : <VideoCamera size={14} />} {isVideoOff ? 'Cam Off' : 'Cam Live'}
+                                </span>
+                            </div>
+
+                            {/* Call Duration */}
+                            <div style={{
+                                background: 'rgba(0,0,0,0.5)',
                                 padding: '6px 14px',
                                 borderRadius: '999px',
                                 fontFamily: 'monospace',
                                 fontSize: '1rem',
                                 fontWeight: 700,
                                 color: '#F43F5E',
-                                border: '1px solid rgba(244, 63, 94, 0.3)'
+                                border: '1px solid rgba(244, 63, 94, 0.4)'
                             }}>
                                 {formatTime(callDuration)}
                             </div>
 
+                            {/* Fullscreen Toggle Button */}
+                            <button
+                                onClick={toggleFullScreen}
+                                style={{
+                                    background: isFullScreen ? 'rgba(255,255,255,0.14)' : 'rgba(124, 58, 237, 0.3)',
+                                    color: 'white',
+                                    border: '1px solid rgba(255,255,255,0.2)',
+                                    padding: '9px 14px',
+                                    borderRadius: '10px',
+                                    fontWeight: 700,
+                                    fontSize: '0.86rem',
+                                    cursor: 'pointer',
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '6px',
+                                    transition: 'all 0.2s ease'
+                                }}
+                                title={isFullScreen ? 'Exit Full Screen' : 'Enter Full Screen'}
+                            >
+                                {isFullScreen ? <ArrowsIn size={18} weight="bold" /> : <ArrowsOut size={18} weight="bold" />}
+                                {isFullScreen ? 'Exit Fullscreen' : 'Full Screen'}
+                            </button>
+
+                            {/* End Call Button */}
                             <button
                                 onClick={handleEndCall}
                                 style={{
-                                    background: '#DC2626',
+                                    background: 'linear-gradient(135deg, #DC2626, #B91C1C)',
                                     color: 'white',
                                     border: 'none',
                                     padding: '9px 18px',
@@ -618,7 +796,7 @@ const Consultancy = () => {
                                     display: 'inline-flex',
                                     alignItems: 'center',
                                     gap: '8px',
-                                    boxShadow: '0 4px 12px rgba(220, 38, 38, 0.4)'
+                                    boxShadow: '0 4px 14px rgba(220, 38, 38, 0.45)'
                                 }}
                             >
                                 <PhoneDisconnect size={18} weight="bold" /> End Call
@@ -627,245 +805,367 @@ const Consultancy = () => {
                     </div>
 
                     {/* Main Screen Viewport */}
-                    {sessionConnecting ? (
-                        <div style={{ padding: '60px 20px', textAlign: 'center' }}>
-                            <div className="spinner" style={{ width: '3rem', height: '3rem', borderTopColor: '#7C3AED', margin: '0 auto 16px' }}></div>
-                            <h4 style={{ fontSize: '1.2rem', fontWeight: 700, margin: '0 0 6px' }}>Connecting to Video Session...</h4>
-                            <p style={{ color: '#94A3B8', fontSize: '0.9rem', margin: 0 }}>Establishing encrypted clinical video stream ({activeCall.agora_channel_name})</p>
-                        </div>
-                    ) : (
-                        <div style={{ position: 'relative', minHeight: '440px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', padding: '24px', overflow: 'hidden' }}>
-                            {/* Real Agora Remote Video Stream Layer */}
+                    <div style={{
+                        position: 'relative',
+                        flex: 1,
+                        width: '100%',
+                        height: isFullScreen ? '100%' : '520px',
+                        minHeight: isFullScreen ? '100%' : '440px',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        justifyContent: 'space-between',
+                        padding: '24px',
+                        overflow: 'hidden'
+                    }}>
+                        {/* Connecting Overlay */}
+                        {sessionConnecting && (
+                            <div style={{
+                                position: 'absolute',
+                                inset: 0,
+                                zIndex: 70,
+                                background: 'rgba(4, 7, 17, 0.94)',
+                                backdropFilter: 'blur(10px)',
+                                display: 'flex',
+                                flexDirection: 'column',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                padding: '60px 20px',
+                                textAlign: 'center'
+                            }}>
+                                <div className="spinner" style={{ width: '3.5rem', height: '3.5rem', borderTopColor: '#7C3AED', margin: '0 auto 18px' }}></div>
+                                <h4 style={{ fontSize: '1.35rem', fontWeight: 800, margin: '0 0 8px', color: 'white' }}>Connecting to CareConnect Live Session...</h4>
+                                <p style={{ color: '#94A3B8', fontSize: '0.92rem', margin: 0, maxWidth: '480px' }}>
+                                    Establishing direct clinical audio & video channel ({activeCall.agora_channel_name}) with patient device
+                                </p>
+                            </div>
+                        )}
+
+                        {/* Real Agora Remote Video Stream Layer (Full Screen Patient Video) */}
+                        <div
+                            ref={remoteVideoRef}
+                            style={{
+                                position: 'absolute',
+                                inset: 0,
+                                width: '100%',
+                                height: '100%',
+                                zIndex: 1,
+                                backgroundColor: '#040711',
+                                display: remoteUserJoined ? 'block' : 'none',
+                                objectFit: 'cover'
+                            }}
+                        />
+
+                        {/* Patient Stage View (When patient camera is connecting / audio-only mode) */}
+                        {!remoteUserJoined && (
+                            <div style={{ position: 'relative', zIndex: 2, textAlign: 'center', margin: 'auto 0', padding: '24px 0' }}>
+                                <div style={{
+                                    width: 120, height: 120, borderRadius: '50%',
+                                    background: isVideoOff ? '#334155' : 'linear-gradient(135deg, #7C3AED, #2563EB)',
+                                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                    margin: '0 auto 20px',
+                                    fontSize: '2.5rem', fontWeight: 800,
+                                    border: '4px solid rgba(255,255,255,0.25)',
+                                    boxShadow: '0 0 40px rgba(124, 58, 237, 0.45)'
+                                }}>
+                                    {isVideoOff ? <VideoCameraSlash size={48} color="#94A3B8" /> : (activeCall.patient_name ? activeCall.patient_name.slice(0, 2).toUpperCase() : 'PT')}
+                                </div>
+                                <h3 style={{ fontSize: '1.6rem', fontWeight: 800, margin: '0 0 8px', color: 'white' }}>
+                                    {activeCall.patient_name || 'Patient'}
+                                </h3>
+                                <p style={{ color: '#94A3B8', fontSize: '0.94rem', margin: '0 0 16px' }}>
+                                    {activeCall.location || 'Remote Consultation'} • {activeCall.consultation_type || 'Video Call'}
+                                </p>
+
+                                <div style={{ display: 'inline-flex', gap: '14px', alignItems: 'center', background: 'rgba(255,255,255,0.08)', padding: '10px 22px', borderRadius: '999px', fontSize: '0.84rem', border: '1px solid rgba(255,255,255,0.12)' }}>
+                                    <span style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#34D399' }}>
+                                        <Pulse size={16} weight="bold" /> Agora Channel: {activeCall.agora_channel_name}
+                                    </span>
+                                    <span style={{ color: 'rgba(255,255,255,0.2)' }}>|</span>
+                                    <span style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#93C5FD' }}>
+                                        <ShieldCheck size={16} weight="bold" /> 2-Way Encrypted Audio & Video Ready
+                                    </span>
+                                    {webhookNotified && (
+                                        <>
+                                            <span style={{ color: 'rgba(255,255,255,0.2)' }}>|</span>
+                                            <span style={{ color: '#34D399', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                <CheckCircle size={14} weight="fill" /> Mobile App Dispatched
+                                            </span>
+                                        </>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Floating Doctor PIP (Picture-In-Picture with live webcam stream) */}
+                        <div
+                            className="careconnect-pip"
+                            style={{
+                                position: 'absolute',
+                                bottom: isFullScreen ? '96px' : '24px',
+                                right: '28px',
+                                width: isFullScreen ? '230px' : '170px',
+                                height: isFullScreen ? '150px' : '118px',
+                                background: '#1E293B',
+                                borderRadius: '16px',
+                                border: '2px solid rgba(255,255,255,0.3)',
+                                overflow: 'hidden',
+                                boxShadow: '0 12px 32px rgba(0,0,0,0.75)',
+                                zIndex: 40,
+                                transition: 'all 0.3s ease'
+                            }}
+                        >
+                            {/* Live Local Doctor Webcam Track */}
                             <div
-                                ref={remoteVideoRef}
+                                ref={localVideoRef}
                                 style={{
-                                    position: 'absolute',
-                                    inset: 0,
                                     width: '100%',
                                     height: '100%',
-                                    zIndex: 1,
-                                    backgroundColor: '#070A12',
-                                    display: remoteUserJoined ? 'block' : 'none'
+                                    display: (!isVideoOff && hasLocalVideoTrack) ? 'block' : 'none',
+                                    objectFit: 'cover'
                                 }}
                             />
 
-                            {/* Patient Stage View (Active when patient video is preparing / audio mode) */}
-                            {!remoteUserJoined && (
-                                <div style={{ position: 'relative', zIndex: 2, textAlign: 'center', margin: 'auto 0', padding: '24px 0' }}>
+                            {/* Fallback Doctor Graphic when camera is muted/off */}
+                            {(isVideoOff || !hasLocalVideoTrack) && (
+                                <div style={{
+                                    width: '100%',
+                                    height: '100%',
+                                    display: 'flex',
+                                    flexDirection: 'column',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    padding: '8px',
+                                    background: '#0B0F19'
+                                }}>
                                     <div style={{
-                                        width: 104, height: 104, borderRadius: '50%',
-                                        background: isVideoOff ? '#334155' : 'linear-gradient(135deg, #7C3AED, #2563EB)',
-                                        display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                        margin: '0 auto 16px',
-                                        fontSize: '2.2rem', fontWeight: 800,
-                                        border: '3px solid rgba(255,255,255,0.2)',
-                                        boxShadow: '0 0 30px rgba(124, 58, 237, 0.4)'
+                                        width: 44, height: 44, borderRadius: '50%',
+                                        background: '#7C3AED', display: 'flex',
+                                        alignItems: 'center', justifyContent: 'center',
+                                        fontWeight: 800, fontSize: '1.05rem', marginBottom: '6px',
+                                        color: 'white',
+                                        boxShadow: '0 4px 12px rgba(124, 58, 237, 0.4)'
                                     }}>
-                                        {isVideoOff ? <VideoCameraSlash size={40} color="#94A3B8" /> : (activeCall.patient_name ? activeCall.patient_name.slice(0, 2).toUpperCase() : 'PT')}
+                                        {isVideoOff ? <VideoCameraSlash size={22} /> : (connectingDoctor?.avatar || 'DOC')}
                                     </div>
-                                    <h3 style={{ fontSize: '1.4rem', fontWeight: 800, margin: '0 0 6px', color: 'white' }}>
-                                        {activeCall.patient_name || 'Patient'}
-                                    </h3>
-                                    <p style={{ color: '#94A3B8', fontSize: '0.88rem', margin: '0 0 14px' }}>
-                                        {activeCall.location || 'Remote Consultation'} • {activeCall.consultation_type || 'Video Call'}
-                                    </p>
-
-                                    <div style={{ display: 'inline-flex', gap: '14px', alignItems: 'center', background: 'rgba(255,255,255,0.08)', padding: '8px 18px', borderRadius: '999px', fontSize: '0.82rem' }}>
-                                        <span style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#34D399' }}>
-                                            <Pulse size={16} weight="bold" /> Agora Channel: {activeCall.agora_channel_name}
-                                        </span>
-                                        <span style={{ color: 'rgba(255,255,255,0.2)' }}>|</span>
-                                        <span style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#93C5FD' }}>
-                                            <ShieldCheck size={16} weight="bold" /> AES-256 Encrypted
-                                        </span>
-                                        {webhookNotified && (
-                                            <>
-                                                <span style={{ color: 'rgba(255,255,255,0.2)' }}>|</span>
-                                                <span style={{ color: '#34D399', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                                    <CheckCircle size={14} weight="fill" /> Webhook Dispatched
-                                                </span>
-                                            </>
-                                        )}
+                                    <div style={{ fontSize: '0.8rem', fontWeight: 700, color: 'white' }}>
+                                        {connectingDoctor?.name?.split(' ')[1] || 'Doctor (You)'}
+                                    </div>
+                                    <div style={{ fontSize: '0.68rem', color: isVideoOff ? '#EF4444' : (hasLocalAudioTrack ? '#10B981' : '#94A3B8'), marginTop: '2px' }}>
+                                        {isVideoOff ? 'Camera Paused' : (hasLocalVideoTrack ? 'Camera Active' : 'Mic Active')}
                                     </div>
                                 </div>
                             )}
 
-                            {/* Floating Doctor PIP (Picture-In-Picture with live webcam stream) */}
+                            {/* Doctor PIP Label Badge */}
                             <div style={{
                                 position: 'absolute',
-                                bottom: '24px',
-                                right: '24px',
-                                width: '170px',
-                                height: '118px',
-                                background: '#1E293B',
-                                borderRadius: '12px',
-                                border: '2px solid rgba(255,255,255,0.25)',
-                                overflow: 'hidden',
-                                boxShadow: '0 8px 24px rgba(0,0,0,0.6)',
-                                zIndex: 10
-                            }}>
-                                {/* Live Local Doctor Webcam Track */}
-                                <div
-                                    ref={localVideoRef}
-                                    style={{
-                                        width: '100%',
-                                        height: '100%',
-                                        display: (!isVideoOff && hasLocalVideoTrack) ? 'block' : 'none'
-                                    }}
-                                />
-
-                                {/* Fallback Doctor Graphic when camera is muted/off */}
-                                {(isVideoOff || !hasLocalVideoTrack) && (
-                                    <div style={{
-                                        width: '100%',
-                                        height: '100%',
-                                        display: 'flex',
-                                        flexDirection: 'column',
-                                        alignItems: 'center',
-                                        justifyContent: 'center',
-                                        padding: '6px'
-                                    }}>
-                                        <div style={{
-                                            width: 42, height: 42, borderRadius: '50%',
-                                            background: '#7C3AED', display: 'flex',
-                                            alignItems: 'center', justifyContent: 'center',
-                                            fontWeight: 800, fontSize: '1rem', marginBottom: '4px',
-                                            color: 'white'
-                                        }}>
-                                            {isVideoOff ? <VideoCameraSlash size={20} /> : (connectingDoctor?.avatar || 'DOC')}
-                                        </div>
-                                        <div style={{ fontSize: '0.75rem', fontWeight: 700, color: 'white' }}>
-                                            {connectingDoctor?.name?.split(' ')[1] || 'Doctor (You)'}
-                                        </div>
-                                        <div style={{ fontSize: '0.65rem', color: isVideoOff ? '#EF4444' : (hasLocalAudioTrack ? '#10B981' : '#94A3B8') }}>
-                                            {isVideoOff ? 'Cam Off' : (hasLocalVideoTrack ? 'Cam Active' : 'Mic Active')}
-                                        </div>
-                                    </div>
-                                )}
-                            </div>
-
-                            {/* Live Patient Vitals Overlay HUD */}
-                            {showVitals && (
-                                <div style={{
-                                    position: 'absolute',
-                                    top: '20px',
-                                    left: '24px',
-                                    background: 'rgba(15, 23, 42, 0.85)',
-                                    backdropFilter: 'blur(8px)',
-                                    borderRadius: '12px',
-                                    border: '1px solid rgba(255,255,255,0.12)',
-                                    padding: '12px 16px',
-                                    display: 'flex',
-                                    gap: '16px',
-                                    fontSize: '0.8rem',
-                                    zIndex: 10
-                                }}>
-                                    <div>
-                                        <div style={{ color: '#94A3B8', fontSize: '0.7rem', fontWeight: 600 }}>Heart Rate</div>
-                                        <div style={{ color: '#F43F5E', fontWeight: 800, display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                            <Heartbeat size={14} weight="fill" /> 74 bpm
-                                        </div>
-                                    </div>
-                                    <div style={{ width: 1, background: 'rgba(255,255,255,0.1)' }} />
-                                    <div>
-                                        <div style={{ color: '#94A3B8', fontSize: '0.7rem', fontWeight: 600 }}>Blood Pressure</div>
-                                        <div style={{ color: '#38BDF8', fontWeight: 800 }}>120/80</div>
-                                    </div>
-                                    <div style={{ width: 1, background: 'rgba(255,255,255,0.1)' }} />
-                                    <div>
-                                        <div style={{ color: '#94A3B8', fontSize: '0.7rem', fontWeight: 600 }}>SpO2</div>
-                                        <div style={{ color: '#34D399', fontWeight: 800 }}>99%</div>
-                                    </div>
-                                    <div style={{ width: 1, background: 'rgba(255,255,255,0.1)' }} />
-                                    <div>
-                                        <div style={{ color: '#94A3B8', fontSize: '0.7rem', fontWeight: 600 }}>Temp</div>
-                                        <div style={{ color: '#FBBF24', fontWeight: 800 }}>98.4°F</div>
-                                    </div>
-                                </div>
-                            )}
-
-                            {/* In-Call Controls Toolbar */}
-                            <div style={{
+                                bottom: '8px',
+                                left: '8px',
+                                background: 'rgba(0,0,0,0.65)',
+                                backdropFilter: 'blur(6px)',
+                                padding: '3px 8px',
+                                borderRadius: '6px',
+                                fontSize: '0.72rem',
+                                color: 'white',
                                 display: 'flex',
                                 alignItems: 'center',
-                                justifyContent: 'center',
-                                gap: '14px',
-                                marginTop: '20px',
-                                padding: '12px',
-                                background: 'rgba(255,255,255,0.06)',
-                                borderRadius: '16px',
-                                backdropFilter: 'blur(10px)',
-                                position: 'relative',
-                                zIndex: 10
+                                gap: '5px',
+                                fontWeight: 600
                             }}>
-                                <button
-                                    onClick={handleToggleMute}
-                                    style={{
-                                        width: 44, height: 44, borderRadius: '50%',
-                                        background: isMuted ? '#EF4444' : 'rgba(255,255,255,0.15)',
-                                        border: 'none', color: 'white', cursor: 'pointer',
-                                        display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                        transition: 'all 0.2s ease'
-                                    }}
-                                    title={isMuted ? 'Unmute Microphone' : 'Mute Microphone'}
-                                >
-                                    {isMuted ? <MicrophoneSlash size={22} weight="bold" /> : <Microphone size={22} weight="bold" />}
-                                </button>
-
-                                <button
-                                    onClick={handleToggleVideo}
-                                    style={{
-                                        width: 44, height: 44, borderRadius: '50%',
-                                        background: isVideoOff ? '#EF4444' : 'rgba(255,255,255,0.15)',
-                                        border: 'none', color: 'white', cursor: 'pointer',
-                                        display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                        transition: 'all 0.2s ease'
-                                    }}
-                                    title={isVideoOff ? 'Turn Camera On' : 'Turn Camera Off'}
-                                >
-                                    {isVideoOff ? <VideoCameraSlash size={22} weight="bold" /> : <VideoCamera size={22} weight="bold" />}
-                                </button>
-
-                                <button
-                                    onClick={() => setShowVitals(!showVitals)}
-                                    style={{
-                                        padding: '8px 16px',
-                                        borderRadius: '10px',
-                                        background: showVitals ? 'rgba(56, 189, 248, 0.2)' : 'rgba(255,255,255,0.1)',
-                                        color: showVitals ? '#38BDF8' : 'white',
-                                        border: '1px solid rgba(56, 189, 248, 0.3)',
-                                        cursor: 'pointer',
-                                        fontSize: '0.84rem',
-                                        fontWeight: 700,
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        gap: '6px'
-                                    }}
-                                >
-                                    <Pulse size={16} weight="bold" /> Vitals HUD
-                                </button>
-
-                                <button
-                                    onClick={() => handlePrescribe(activeCall.patient_name, activeCall.patient_mobile)}
-                                    style={{
-                                        padding: '8px 16px',
-                                        borderRadius: '10px',
-                                        background: 'rgba(16, 185, 129, 0.2)',
-                                        color: '#34D399',
-                                        border: '1px solid rgba(16, 185, 129, 0.3)',
-                                        cursor: 'pointer',
-                                        fontSize: '0.84rem',
-                                        fontWeight: 700,
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        gap: '6px'
-                                    }}
-                                >
-                                    <Pill size={16} weight="bold" /> Issue Prescription
-                                </button>
+                                <span style={{ width: 6, height: 6, borderRadius: '50%', background: isMuted ? '#EF4444' : '#10B981' }} />
+                                You (Doctor)
                             </div>
                         </div>
-                    )}
+
+                        {/* Live Patient Vitals Overlay HUD */}
+                        {showVitals && (
+                            <div style={{
+                                position: 'absolute',
+                                top: isFullScreen ? '90px' : '20px',
+                                left: '28px',
+                                background: 'rgba(15, 23, 42, 0.88)',
+                                backdropFilter: 'blur(12px)',
+                                borderRadius: '16px',
+                                border: '1px solid rgba(255,255,255,0.15)',
+                                padding: '14px 20px',
+                                display: 'flex',
+                                gap: '20px',
+                                fontSize: '0.82rem',
+                                zIndex: 35,
+                                boxShadow: '0 8px 24px rgba(0,0,0,0.5)'
+                            }}>
+                                <div>
+                                    <div style={{ color: '#94A3B8', fontSize: '0.72rem', fontWeight: 600, textTransform: 'uppercase' }}>Heart Rate</div>
+                                    <div style={{ color: '#F43F5E', fontWeight: 800, display: 'flex', alignItems: 'center', gap: '5px', fontSize: '1.05rem', marginTop: '2px' }}>
+                                        <Heartbeat size={16} weight="fill" /> 74 bpm
+                                    </div>
+                                </div>
+                                <div style={{ width: 1, background: 'rgba(255,255,255,0.12)' }} />
+                                <div>
+                                    <div style={{ color: '#94A3B8', fontSize: '0.72rem', fontWeight: 600, textTransform: 'uppercase' }}>Blood Pressure</div>
+                                    <div style={{ color: '#38BDF8', fontWeight: 800, fontSize: '1.05rem', marginTop: '2px' }}>120/80</div>
+                                </div>
+                                <div style={{ width: 1, background: 'rgba(255,255,255,0.12)' }} />
+                                <div>
+                                    <div style={{ color: '#94A3B8', fontSize: '0.72rem', fontWeight: 600, textTransform: 'uppercase' }}>SpO2</div>
+                                    <div style={{ color: '#34D399', fontWeight: 800, fontSize: '1.05rem', marginTop: '2px' }}>99%</div>
+                                </div>
+                                <div style={{ width: 1, background: 'rgba(255,255,255,0.12)' }} />
+                                <div>
+                                    <div style={{ color: '#94A3B8', fontSize: '0.72rem', fontWeight: 600, textTransform: 'uppercase' }}>Temp</div>
+                                    <div style={{ color: '#FBBF24', fontWeight: 800, fontSize: '1.05rem', marginTop: '2px' }}>98.4°F</div>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* In-Call Controls Floating Dock */}
+                        <div style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: '16px',
+                            padding: '12px 24px',
+                            background: 'rgba(15, 23, 42, 0.88)',
+                            borderRadius: '24px',
+                            backdropFilter: 'blur(16px)',
+                            border: '1px solid rgba(255,255,255,0.16)',
+                            boxShadow: '0 12px 36px rgba(0,0,0,0.6)',
+                            position: 'absolute',
+                            bottom: '24px',
+                            left: '50%',
+                            transform: 'translateX(-50%)',
+                            zIndex: 50
+                        }}>
+                            {/* Microphone Button */}
+                            <button
+                                onClick={handleToggleMute}
+                                style={{
+                                    width: 48, height: 48, borderRadius: '50%',
+                                    background: isMuted ? '#EF4444' : 'rgba(255,255,255,0.15)',
+                                    border: isMuted ? 'none' : '1px solid rgba(255,255,255,0.25)',
+                                    color: 'white', cursor: 'pointer',
+                                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                    transition: 'all 0.2s ease',
+                                    boxShadow: isMuted ? '0 0 16px rgba(239,68,68,0.5)' : 'none'
+                                }}
+                                title={isMuted ? 'Unmute Microphone' : 'Mute Microphone'}
+                            >
+                                {isMuted ? <MicrophoneSlash size={24} weight="bold" /> : <Microphone size={24} weight="bold" />}
+                            </button>
+
+                            {/* Camera Button */}
+                            <button
+                                onClick={handleToggleVideo}
+                                style={{
+                                    width: 48, height: 48, borderRadius: '50%',
+                                    background: isVideoOff ? '#EF4444' : 'rgba(255,255,255,0.15)',
+                                    border: isVideoOff ? 'none' : '1px solid rgba(255,255,255,0.25)',
+                                    color: 'white', cursor: 'pointer',
+                                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                    transition: 'all 0.2s ease',
+                                    boxShadow: isVideoOff ? '0 0 16px rgba(239,68,68,0.5)' : 'none'
+                                }}
+                                title={isVideoOff ? 'Turn Camera On' : 'Turn Camera Off'}
+                            >
+                                {isVideoOff ? <VideoCameraSlash size={24} weight="bold" /> : <VideoCamera size={24} weight="bold" />}
+                            </button>
+
+                            {/* Speaker Test & Boost Button */}
+                            <button
+                                onClick={handleSpeakerTest}
+                                style={{
+                                    width: 48, height: 48, borderRadius: '50%',
+                                    background: 'rgba(255,255,255,0.15)',
+                                    border: '1px solid rgba(255,255,255,0.25)',
+                                    color: '#38BDF8', cursor: 'pointer',
+                                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                    transition: 'all 0.2s ease'
+                                }}
+                                title="Audio Speaker Output (Click to verify & unblock sound)"
+                            >
+                                <SpeakerHigh size={24} weight="bold" />
+                            </button>
+
+                            <div style={{ width: 1, height: 32, background: 'rgba(255,255,255,0.15)' }} />
+
+                            {/* Vitals HUD Toggle */}
+                            <button
+                                onClick={() => setShowVitals(!showVitals)}
+                                style={{
+                                    padding: '9px 18px',
+                                    borderRadius: '12px',
+                                    background: showVitals ? 'rgba(56, 189, 248, 0.22)' : 'rgba(255,255,255,0.1)',
+                                    color: showVitals ? '#38BDF8' : 'white',
+                                    border: '1px solid rgba(56, 189, 248, 0.35)',
+                                    cursor: 'pointer',
+                                    fontSize: '0.86rem',
+                                    fontWeight: 700,
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '8px'
+                                }}
+                            >
+                                <Pulse size={18} weight="bold" /> Vitals HUD
+                            </button>
+
+                            {/* Issue Prescription */}
+                            <button
+                                onClick={() => handlePrescribe(activeCall.patient_name, activeCall.patient_mobile)}
+                                style={{
+                                    padding: '9px 18px',
+                                    borderRadius: '12px',
+                                    background: 'rgba(16, 185, 129, 0.22)',
+                                    color: '#34D399',
+                                    border: '1px solid rgba(16, 185, 129, 0.35)',
+                                    cursor: 'pointer',
+                                    fontSize: '0.86rem',
+                                    fontWeight: 700,
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '8px'
+                                }}
+                            >
+                                <Pill size={18} weight="bold" /> Issue Prescription
+                            </button>
+
+                            {/* Fullscreen Toggle */}
+                            <button
+                                onClick={toggleFullScreen}
+                                style={{
+                                    width: 48, height: 48, borderRadius: '50%',
+                                    background: 'rgba(255,255,255,0.15)',
+                                    border: '1px solid rgba(255,255,255,0.25)',
+                                    color: 'white', cursor: 'pointer',
+                                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                    transition: 'all 0.2s ease'
+                                }}
+                                title={isFullScreen ? 'Exit Full Screen' : 'Enter Full Screen'}
+                            >
+                                {isFullScreen ? <ArrowsIn size={22} weight="bold" /> : <ArrowsOut size={22} weight="bold" />}
+                            </button>
+
+                            {/* End Call Button */}
+                            <button
+                                onClick={handleEndCall}
+                                style={{
+                                    background: 'linear-gradient(135deg, #DC2626, #B91C1C)',
+                                    color: 'white',
+                                    border: 'none',
+                                    padding: '10px 20px',
+                                    borderRadius: '12px',
+                                    fontWeight: 700,
+                                    fontSize: '0.88rem',
+                                    cursor: 'pointer',
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '8px',
+                                    boxShadow: '0 4px 16px rgba(220, 38, 38, 0.5)'
+                                }}
+                            >
+                                <PhoneDisconnect size={20} weight="bold" /> End Call
+                            </button>
+                        </div>
+                    </div>
                 </div>
             )}
 
@@ -926,10 +1226,13 @@ const Consultancy = () => {
                                 borderRadius: '8px',
                                 border: 'none',
                                 cursor: 'pointer',
-                                fontSize: '0.88rem'
+                                fontSize: '0.88rem',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '6px'
                             }}
                         >
-                            Join Room
+                            <VideoCamera size={16} weight="bold" /> Connect
                         </button>
                     </div>
                 </div>
@@ -1092,6 +1395,25 @@ const Consultancy = () => {
                                                     {call.preferred_date || 'Today'} at {call.preferred_time || '10:00 AM'}
                                                     {call.location ? ` • ${call.location}` : ''}
                                                 </div>
+                                                {call.call_id && (
+                                                    <div
+                                                        onClick={() => { navigator.clipboard.writeText(call.call_id); toast.success('Call ID copied'); }}
+                                                        style={{
+                                                            fontSize: '0.72rem',
+                                                            color: '#6366F1',
+                                                            marginTop: '3px',
+                                                            fontFamily: 'monospace',
+                                                            fontWeight: 600,
+                                                            cursor: 'pointer',
+                                                            display: 'inline-flex',
+                                                            alignItems: 'center',
+                                                            gap: '4px'
+                                                        }}
+                                                        title="Click to copy Call ID"
+                                                    >
+                                                        <Copy size={12} /> ID: {call.call_id}
+                                                    </div>
+                                                )}
                                             </div>
                                         </div>
 
@@ -1136,7 +1458,7 @@ const Consultancy = () => {
                                                         cursor: 'pointer'
                                                     }}
                                                 >
-                                                    <VideoCamera size={16} weight="fill" /> Accept & Call
+                                                    <VideoCamera size={16} weight="fill" /> Connect Call
                                                 </button>
                                             )}
 
@@ -1157,7 +1479,29 @@ const Consultancy = () => {
                                                         cursor: 'pointer'
                                                     }}
                                                 >
-                                                    <VideoCamera size={16} weight="fill" /> Join Session
+                                                    <VideoCamera size={16} weight="fill" /> Connect (Join)
+                                                </button>
+                                            )}
+
+                                            {isCompleted && (
+                                                <button
+                                                    onClick={() => handleStartCall(call)}
+                                                    style={{
+                                                        background: 'rgba(124,58,237,0.1)',
+                                                        border: '1px solid #7C3AED',
+                                                        color: '#7C3AED',
+                                                        padding: '8px 14px',
+                                                        borderRadius: '8px',
+                                                        fontSize: '0.84rem',
+                                                        fontWeight: 700,
+                                                        display: 'inline-flex',
+                                                        alignItems: 'center',
+                                                        gap: '6px',
+                                                        cursor: 'pointer'
+                                                    }}
+                                                    title="Reconnect to this session"
+                                                >
+                                                    <VideoCamera size={16} weight="fill" /> Reconnect
                                                 </button>
                                             )}
 

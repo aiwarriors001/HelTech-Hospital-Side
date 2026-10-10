@@ -85,16 +85,41 @@ export async function joinAgoraSession({
     onRemoteUserLeft
 }) {
     try {
-        // Initialize Agora client
-        if (!agoraClient) {
-            agoraClient = AgoraRTC.createClient({ mode: 'rtc', codec: 'vp8' });
+        // Clean up previous client if any before joining new session
+        if (agoraClient) {
+            try {
+                await leaveAgoraSession();
+            } catch (_) {}
         }
+        agoraClient = AgoraRTC.createClient({ mode: 'rtc', codec: 'vp8' });
 
-        // Listen for remote participants
+        // Autoplay policy failure recovery
+        AgoraRTC.onAudioAutoplayFailed = () => {
+            console.warn('Audio autoplay failed. Automatically resuming on next interaction.');
+            const resumeAudio = () => {
+                if (agoraClient && agoraClient.remoteUsers) {
+                    agoraClient.remoteUsers.forEach(u => {
+                        if (u.audioTrack) u.audioTrack.play();
+                    });
+                }
+            };
+            window.addEventListener('click', resumeAudio, { once: true });
+            window.addEventListener('touchstart', resumeAudio, { once: true });
+        };
+
+        // Listen for remote participants publishing media
         agoraClient.on('user-published', async (user, mediaType) => {
-            await agoraClient.subscribe(user, mediaType);
-            if (onRemoteUserJoined) {
-                onRemoteUserJoined(user, mediaType);
+            try {
+                await agoraClient.subscribe(user, mediaType);
+                if (mediaType === 'audio' && user.audioTrack) {
+                    user.audioTrack.setVolume(100);
+                    user.audioTrack.play();
+                }
+                if (onRemoteUserJoined) {
+                    onRemoteUserJoined(user, mediaType);
+                }
+            } catch (subErr) {
+                console.warn('Subscription error for remote user:', subErr);
             }
         });
 
@@ -107,25 +132,59 @@ export async function joinAgoraSession({
         // Join the channel
         const clientUid = await agoraClient.join(appId, channelName, token, uid);
 
-        // Create local camera and microphone tracks
+        // Check if any remote participants are already in channel and subscribe immediately
+        if (agoraClient.remoteUsers && agoraClient.remoteUsers.length > 0) {
+            for (const rUser of agoraClient.remoteUsers) {
+                if (rUser.hasAudio) {
+                    try {
+                        await agoraClient.subscribe(rUser, 'audio');
+                        if (rUser.audioTrack) {
+                            rUser.audioTrack.setVolume(100);
+                            rUser.audioTrack.play();
+                        }
+                        if (onRemoteUserJoined) onRemoteUserJoined(rUser, 'audio');
+                    } catch (_) {}
+                }
+                if (rUser.hasVideo) {
+                    try {
+                        await agoraClient.subscribe(rUser, 'video');
+                        if (onRemoteUserJoined) onRemoteUserJoined(rUser, 'video');
+                    } catch (_) {}
+                }
+            }
+        }
+
+        // Create local camera and microphone tracks with optimal clinical audio processing
         let localTracksCreated = false;
         try {
-            [localAudioTrack, localVideoTrack] = await AgoraRTC.createMicrophoneAndCameraTracks(
-                { encoderConfig: 'music_standard' },
-                { encoderConfig: '720p_1' }
-            );
-            await agoraClient.publish([localAudioTrack, localVideoTrack]);
+            // High-clarity clinical speech with AEC (Echo Cancellation), AGC (Gain Control), and ANS (Noise Suppression)
+            localAudioTrack = await AgoraRTC.createMicrophoneAudioTrack({
+                encoderConfig: 'speech_standard',
+                AEC: true,
+                AGC: true,
+                ANS: true
+            });
+            localAudioTrack.setVolume(100);
+            await localAudioTrack.setEnabled(true);
+        } catch (micError) {
+            console.warn('Microphone hardware access note:', micError.message);
+        }
+
+        try {
+            localVideoTrack = await AgoraRTC.createCameraVideoTrack({
+                encoderConfig: '720p_1',
+                optimizationMode: 'detail'
+            });
+            await localVideoTrack.setEnabled(true);
+        } catch (camError) {
+            console.warn('Camera hardware access note:', camError.message);
+        }
+
+        // Publish available local tracks to remote participant
+        const tracksToPublish = [localAudioTrack, localVideoTrack].filter(Boolean);
+        if (tracksToPublish.length > 0) {
+            await agoraClient.publish(tracksToPublish);
             localTracksCreated = true;
-        } catch (deviceError) {
-            console.warn('Microphone/camera access note:', deviceError.message);
-            // Even if hardware camera is not available in dev, audio track might be attempted:
-            try {
-                localAudioTrack = await AgoraRTC.createMicrophoneAudioTrack();
-                await agoraClient.publish([localAudioTrack]);
-                localTracksCreated = true;
-            } catch (micErr) {
-                console.warn('Audio-only fallback note:', micErr.message);
-            }
         }
 
         return {
@@ -148,8 +207,17 @@ export async function joinAgoraSession({
  */
 export async function setAgoraMuted(muted) {
     if (localAudioTrack) {
-        await localAudioTrack.setEnabled(!muted);
-        return true;
+        try {
+            if (typeof localAudioTrack.setMuted === 'function') {
+                await localAudioTrack.setMuted(muted);
+            } else {
+                await localAudioTrack.setEnabled(!muted);
+            }
+            return true;
+        } catch (_) {
+            await localAudioTrack.setEnabled(!muted);
+            return true;
+        }
     }
     return false;
 }
@@ -159,8 +227,17 @@ export async function setAgoraMuted(muted) {
  */
 export async function setAgoraVideoOff(videoOff) {
     if (localVideoTrack) {
-        await localVideoTrack.setEnabled(!videoOff);
-        return true;
+        try {
+            if (typeof localVideoTrack.setMuted === 'function') {
+                await localVideoTrack.setMuted(videoOff);
+            } else {
+                await localVideoTrack.setEnabled(!videoOff);
+            }
+            return true;
+        } catch (_) {
+            await localVideoTrack.setEnabled(!videoOff);
+            return true;
+        }
     }
     return false;
 }
